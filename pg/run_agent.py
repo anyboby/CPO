@@ -15,6 +15,8 @@ from cpo_rl.utils.logx import EpochLogger
 from cpo_rl.utils.mpi_tf import MpiAdamOptimizer, sync_all_params
 from cpo_rl.utils.mpi_tools import mpi_fork, proc_id, num_procs, mpi_sum
 from cpo_rl.utils.mpi_running_mean_std import RunningMeanStd
+import cpo_rl.utils.tf_util as U
+
 
 from random import randint
 
@@ -342,8 +344,11 @@ def run_polopt_agent(env_fn,
                 env.render()
             
             # Get outputs from policy
+            #get_action_outs = sess.run(get_action_ops, 
+            #                           feed_dict={x_ph: o[np.newaxis]})
             get_action_outs = sess.run(get_action_ops, 
-                                       feed_dict={x_ph: o[np.newaxis]})
+                                        feed_dict={x_ph: U.adjust_shape(x_ph, [o])})
+            
             a = get_action_outs['pi']
             v_t = get_action_outs['v']
             vc_t = get_action_outs.get('vc', 0)  # Agent may not use cost value func
@@ -376,7 +381,8 @@ def run_polopt_agent(env_fn,
                     # Note: we do not count env time out as true terminal state
                     last_val, last_cval = 0, 0
                 else:
-                    feed_dict={x_ph: o[np.newaxis]}
+                    feed_dict={x_ph: U.adjust_shape(x_ph, [o])}
+                    #feed_dict={x_ph: o[np.newaxis]}
                     if agent.reward_penalized:
                         last_val = sess.run(v, feed_dict=feed_dict)
                         last_cval = 0

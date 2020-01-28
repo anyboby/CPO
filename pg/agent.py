@@ -168,6 +168,7 @@ class TRPOAgent(TrustRegionAgent):
         self.logger.log_tabular('Alpha', average_only=True)
         self.logger.log_tabular('BacktrackIters', average_only=True)
 
+
 class CPOAgent(TrustRegionAgent):
 
 #   reward_penalized=False,     # Irrelevant in CPO
@@ -299,7 +300,7 @@ class CPOAgent(TrustRegionAgent):
 
 
         self.logger.log("cur_cost_limit %.3f"%cost_lim, "blue")
-        
+
         # CPO uses backtracking linesearch to enforce constraints
         self.logger.log('surr_cost_old %.3f'%surr_cost_old, 'blue')
         for j in range(self.backtrack_iters):

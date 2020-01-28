@@ -95,7 +95,7 @@ def run_polopt_agent(env_fn,
     # Observation normalization.
     if normalize_observations:
         with tf.variable_scope('obs_rms'):
-            obs_rms = RunningMeanStd(shape=env.observation_space)
+            obs_rms = RunningMeanStd(shape=env.observation_space.shape)
     else:
             obs_rms = None
     normalized_obs0 = tf.clip_by_value(normalize(x_ph, obs_rms),
@@ -326,6 +326,7 @@ def run_polopt_agent(env_fn,
 
 
 
+
     #=========================================================================#
     #  Run main environment interaction loop                                  #
     #=========================================================================#
@@ -540,3 +541,4 @@ def normalize(x, stats):
     if stats is None:
         return x
     return (x - stats.mean) / (stats.std + 1e-8)
+

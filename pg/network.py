@@ -14,6 +14,7 @@ def placeholder(dim=None):
 def placeholders(*args):
     return [placeholder(dim) for dim in args]
 
+
 def placeholder_from_space(space):
     if isinstance(space, Box):
         return placeholder(space.shape)

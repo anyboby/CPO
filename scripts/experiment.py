@@ -33,8 +33,8 @@ def main(robot, task, algo, seed, exp_name, cpu):
     save_freq = 50
     target_kl = 0.01
     #cost_lim = 25
-    cost_lim = 0
-    cost_lim_end = 0
+    cost_lim = 25
+    cost_lim_end = 25
 
     # Fork for parallelizing
     mpi_fork(cpu)

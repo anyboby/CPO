@@ -27,7 +27,7 @@ def run_polopt_agent(env_fn,
                      actor_critic=mlp_actor_critic, 
                      ac_kwargs=dict(), 
                      seed=0,
-                     render=False,
+                     render=True,
                      # Experience collection:
                      steps_per_epoch=4000, 
                      epochs=50, 
@@ -96,19 +96,20 @@ def run_polopt_agent(env_fn,
     if normalize_observations:
         with tf.variable_scope('obs_rms'):
             obs_rms = RunningMeanStd(shape=env.observation_space.shape)
+            x_ph = tf.clip_by_value(normalize(x_ph, obs_rms),
+                observation_range[0], observation_range[1])
+
     else:
             obs_rms = None
-    normalized_obs0 = tf.clip_by_value(normalize(x_ph, obs_rms),
-        observation_range[0], observation_range[1])
     #normalized_obs1 = tf.clip_by_value(normalize(obs1, self.obs_rms),
     #    observation_range[0], self.observation_range[1])
 
     # Outputs from actor critic
-    ac_outs = actor_critic(normalized_obs0, a_ph, **ac_kwargs)
+    ac_outs = actor_critic(x_ph, a_ph, **ac_kwargs)
     pi, logp, logp_pi, pi_info, pi_info_phs, d_kl, ent, v, vc = ac_outs
 
     # Organize placeholders for zipping with data from buffer on updates
-    buf_phs = [normalized_obs0, a_ph, adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph]
+    buf_phs = [x_ph, a_ph, adv_ph, cadv_ph, ret_ph, cret_ph, logp_old_ph]
     buf_phs += values_as_sorted_list(pi_info_phs)
 
     # Organize symbols we have to compute at each step of acting in env
@@ -246,7 +247,7 @@ def run_polopt_agent(env_fn,
     sess.run(sync_all_params())
 
     # Setup model saving
-    logger.setup_tf_saver(sess, inputs={'x': normalized_obs0}, outputs={'pi': pi, 'v': v, 'vc': vc})
+    logger.setup_tf_saver(sess, inputs={'x': x_ph}, outputs={'pi': pi, 'v': v, 'vc': vc})
 
 
     #=========================================================================#
@@ -345,10 +346,10 @@ def run_polopt_agent(env_fn,
                 env.render()
             
             # Get outputs from policy
-            #get_action_outs = sess.run(get_action_ops, 
-            #                           feed_dict={x_ph: o[np.newaxis]})
             get_action_outs = sess.run(get_action_ops, 
-                                        feed_dict={x_ph: U.adjust_shape(x_ph, [o])})
+                                       feed_dict={x_ph: o[np.newaxis]})
+            #get_action_outs = sess.run(get_action_ops, 
+            #                            feed_dict={x_ph: U.adjust_shape(x_ph, [o])})
             
             a = get_action_outs['pi']
             v_t = get_action_outs['v']
@@ -358,6 +359,7 @@ def run_polopt_agent(env_fn,
 
             # Step in environment
             o2, r, d, info = env.step(a)
+
 
             # Include penalty on cost
             c = info.get('cost', 0)
@@ -382,8 +384,8 @@ def run_polopt_agent(env_fn,
                     # Note: we do not count env time out as true terminal state
                     last_val, last_cval = 0, 0
                 else:
-                    feed_dict={x_ph: U.adjust_shape(x_ph, [o])}
-                    #feed_dict={x_ph: o[np.newaxis]}
+                    #feed_dict={x_ph: U.adjust_shape(x_ph, [o])}
+                    feed_dict={x_ph: o[np.newaxis]}
                     if agent.reward_penalized:
                         last_val = sess.run(v, feed_dict=feed_dict)
                         last_cval = 0

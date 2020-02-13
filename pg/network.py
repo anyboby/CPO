@@ -33,6 +33,9 @@ def mlp(x, hidden_sizes=(32,), activation=tf.tanh, output_activation=None):
 def get_vars(scope=''):
     return [x for x in tf.trainable_variables() if scope in x.name]
 
+def get_perturbable_vars(scope=''):
+    return [x for x in tf.trainable_variables() if scope in x.name and 'LayerNorm' not in var.name]
+
 def count_vars(scope=''):
     v = get_vars(scope)
     return sum([np.prod(var.shape.as_list()) for var in v])

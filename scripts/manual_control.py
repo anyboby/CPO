@@ -66,38 +66,47 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
     ##### model construction #####
     _model_train_freq = 1000
-    _rollout_freq = 1000
+    _rollout_freq = 950
 
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = np.prod(env.action_space.shape)
 
-    hidden_dim = 340
+    hidden_dim = 420
     num_networks = 7
     num_elites = 5
-
-    mse_weights = np.ones(shape=(obs_dim+1), dtype='float32')*100
-    mse_weights[0:3] = 0.0001
-    mse_weights[19:22] = 0.001
  
-    sensors_to_stack = 3
+    sensors_to_stack = 4
+    sensor_dims = {
+        'acc':3,
+        'gyro':3,
+        'velo':3,
+        'action':2,
+    }        
     stacks_p_sensor = 4
-    add_obs = 3*sensors_to_stack*(stacks_p_sensor-1)
+    add_obs = sum(list(sensor_dims.values())*(stacks_p_sensor-1))
     sensor_stack = {
         'acc':[],
         'gyro':[],
         'velo':[],
-        #'action':[]
+        'action':[],
     }
     sensor_indcs = {
         'acc' : 3,
         'gyro' : 22,
         'velo' : 60,
-        #'action':0,
+        'action': 62,
     }
     assert len(sensor_stack)!=sensors_to_stack or len(sensor_indcs)!=sensor_stack
 
+    mse_weights = np.ones(shape=(obs_dim+add_obs+1), dtype='float32')
+    mse_weights[0:3] = 0.01
+    mse_weights[19:22] = 0.1
+    mse_weights[60:69] = 0.01
+    mse_weights[69:78] = 0.1
+    mse_weights[86:94] = 0.0
+    mse_weights = mse_weights*1000
 
-    model = construct_model(obs_dim=obs_dim, add_dim=add_obs, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites, mse_weights=mse_weights)
+    model = construct_model(obs_dim=obs_dim+add_obs, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites, mse_weights=mse_weights)
     #pool = np.zeros(shape=(_model_train_freq, obs_dim+act_dim))
     pool = {
         'actions':np.zeros(shape=(_model_train_freq-stacks_p_sensor-1,act_dim), dtype='float32'),
@@ -183,20 +192,23 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
             ## stack sensor
             if sensors_to_stack>0:
-                if len(list(sensor_stack.values())[0])>=stacks_p_sensor:
+                if len(list(sensor_stack.values())[0])>=stacks_p_sensor+1:
                     for k in sensor_stack:
                         sensor_stack[k].pop(0)
                     ready_to_pool = True
                 for k in sensor_stack:
-                    sensor_stack[k].append(obs[sensor_indcs[k]-3:sensor_indcs[k]])
+                    if k == 'action':
+                        sensor_stack[k].append(action)
+                    else:
+                        sensor_stack[k].append(obs[sensor_indcs[k]-3:sensor_indcs[k]])
 
             ## store samples
             if ready_to_pool:
                 obs_old_s = obs_old
                 obs_next_s = obs
                 for k in sensor_stack:
-                    stack = np.array(sensor_stack[k][:-1]).flatten()
-                    stack_next = np.array(sensor_stack[k][1:]).flatten()
+                    stack = np.array(sensor_stack[k][:-2]).flatten()
+                    stack_next = np.array(sensor_stack[k][1:-1]).flatten()
                     obs_old_s = np.concatenate((obs_old_s, stack), axis=0)
                     obs_next_s  = np.concatenate((obs_next_s, stack_next), axis=0)
                     
@@ -214,7 +226,6 @@ def main(robot, task, algo, seed, exp_name, cpu):
             ##### train model #####
             if total_timesteps % _model_train_freq == 0:
                 total_timesteps = 0
-                #model.reset()        #@anyboby debug
                 
                 
                 if big_pool:
@@ -225,30 +236,18 @@ def main(robot, task, algo, seed, exp_name, cpu):
                         big_pool[key] = np.copy(pool[key])
 
                 #### train the model with input:(obs, act), outputs: (rew, delta_obs), inputs are divided into sets with holdout_ratio
-                model_train_metrics = _train_model(model, big_pool, batch_size=512, max_epochs=None, holdout_ratio=0.2, max_grad_updates=500, obs_stack_size=add_obs)
+                #model.reset()        #@anyboby debug
+                model_train_metrics = _train_model(model, big_pool, batch_size=512, max_epochs=None, holdout_ratio=0.2, max_grad_updates=500)
 
-            if total_timesteps % _rollout_freq == 0:
-                # ensemble_model_means, ensemble_model_vars = model.predict(inputs, factored=True)       #### self.model outputs whole ensembles outputs
-                # ensemble_model_means[:,:,1:] += obs                                                         #### models output state change rather than state completely
-                # ensemble_model_stds = np.sqrt(ensemble_model_vars)                                          #### std = sqrt(variance)
-                # ensemble_samples = ensemble_model_means + np.random.normal(size=ensemble_model_means.shape) * ensemble_model_stds
+            if total_timesteps % _rollout_freq == 0 and ready_to_pool and not done and episode>1:
+                f_next_obs = pool['next_observations'][total_timesteps-stacks_p_sensor-2,:]
+                error_check = np.sum(f_next_obs[:-add_obs]-obs)
+                print(error_check)
 
-                # #### choose one model from ensemble randomly
-                # num_models, batch_size, _ = ensemble_model_means.shape
-                # model_inds = model.random_inds(batch_size)
-                # batch_inds = np.arange(0, batch_size)
-                # samples = ensemble_samples[model_inds, batch_inds]
-                # model_means = ensemble_model_means[model_inds, batch_inds]
-                # model_stds = ensemble_model_stds[model_inds, batch_inds]
-                # ####
-
-                # rewards, pred_obs = samples[:,:1], samples[:,1:]
-                # terminals = static_fns.termination_fn(obs, action, pred_obs)
-                f_next_obs = env.reset()
                 for _ in range(0,5):
                     f_next_obs, f_rew, f_term, f_info = fake_env.step(f_next_obs, action, deterministic=True)
                     r_next_obs, r_rew, r_term, r_info = env.step(action)
-                    error = f_next_obs-r_next_obs
+                    error = f_next_obs[:-add_obs]-r_next_obs
 
                     ### test: replace only sensor info for rollout
                     # f_next_obs[0:3]  = r_next_obs[0:3]
@@ -259,20 +258,6 @@ def main(robot, task, algo, seed, exp_name, cpu):
                     with np.printoptions(precision=3, suppress=True):
                         print("______________________________________________________")
                         print("action: ", action)
-                        # print(f_next_obs[0:3])
-                        # print(r_next_obs[0:3])
-                        # print(f_next_obs[3:19])
-                        # print(r_next_obs[3:19])
-                        # print(f_next_obs[19:22])
-                        # print(r_next_obs[19:22])
-                        # print(f_next_obs[22:38])
-                        # print(r_next_obs[22:38])
-                        # print(f_next_obs[38:41])
-                        # print(r_next_obs[38:41])
-                        # print(f_next_obs[41:57])
-                        # print(r_next_obs[41:57])
-                        # print(f_next_obs[57:60])
-                        # print(r_next_obs[57:60])
                         
                         print(error[0:3])
                         print(error[3:19])
@@ -303,10 +288,10 @@ def main(robot, task, algo, seed, exp_name, cpu):
         print("-----Safety Gym Environment is closed-----")
 
 
-def _train_model(model, pool, obs_stack_size=0, **kwargs):
+def _train_model(model, pool, **kwargs):
 
     #### format samples to fit: inputs: concatenate(obs,act), outputs: concatenate(rew, delta_obs)
-    train_inputs, train_outputs = format_samples_for_training(pool, obs_stack_size)
+    train_inputs, train_outputs = format_samples_for_training(pool)
     model_metrics = model.train(train_inputs, train_outputs, **kwargs)
     return model_metrics
 

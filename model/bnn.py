@@ -409,7 +409,7 @@ class BNN:
                     ### just to debug, which parts of the output generate most losses ###
 
                     named_losses = [['M{}'.format(i), losses[i]] for i in range(len(losses))]
-                    named_holdout_losses = [['V{}'.format(i), holdout_losses[i]] for i in range(len(holdout_losses))]
+                    named_holdout_losses = [['V{}'.format(i), round(holdout_losses[i], 3)] for i in range(len(holdout_losses))]
                     named_losses = named_losses + named_holdout_losses + [['T', time.time() - t0]]
                     progress.set_description(named_losses)
 
@@ -604,7 +604,7 @@ class BNN:
 
         if inc_var_loss:
             mse_losses = tf.reduce_mean(tf.reduce_mean(tf.square(mean - targets) * inv_var * mse_weights, axis=-1), axis=-1)
-            var_losses = tf.reduce_mean(tf.reduce_mean(log_var * mse_weights, axis=-1), axis=-1)
+            var_losses = tf.reduce_mean(tf.reduce_mean(log_var, axis=-1), axis=-1)
             total_losses = mse_losses + var_losses
         else:
             total_losses = tf.reduce_mean(tf.reduce_mean(tf.square(mean - targets) * mse_weights, axis=-1), axis=-1)

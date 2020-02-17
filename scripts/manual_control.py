@@ -176,7 +176,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
     static_fns = StaticFns           # termination functions for the envs (model can't simulate those)
     fake_env = FakeEnv(model, static_fns)
-    perturbed_env = PerturbedEnv(p_env, std_inc=0.03)
+    perturbed_env = PerturbedEnv(p_env, std_inc=0)#0.03)
 
     try:
         obs, init_sim_state = env.reset()

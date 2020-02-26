@@ -10,12 +10,15 @@ from cpo_rl.pg.cpo_algo import cpo
 from cpo_rl.model.constructor import construct_model, format_samples_for_training
 from cpo_rl.model.fake_env import FakeEnv
 from cpo_rl.model.perturbed_env import PerturbedEnv
+from preprocessor import SafetyPreprocessedEnv
 #from gym.utils import play
 
 import numpy as np
 import pandas
 import random
+import matplotlib.pyplot as plt
 from copy import deepcopy
+import time 
 
 import pygame
 from pygame.locals import K_UP
@@ -50,6 +53,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
     
     env_name = 'Safexp-'+robot+task+'-v0'
     env = gym.make(env_name)
+    env = SafetyPreprocessedEnv(env)
     p_env = gym.make(env_name)
     #gym.utils.play.play(env, zoom=3)
     actions = [
@@ -62,13 +66,13 @@ def main(robot, task, algo, seed, exp_name, cpu):
     ]
     
     clock = pygame.time.Clock()
-    manual_control = True
+    manual_control = False
     render = True
     step_on_key = True
 
     ##### model construction #####
     _model_train_freq = 1000
-    _rollout_freq = 950
+    _rollout_freq = 100000
 
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = np.prod(env.action_space.shape)
@@ -84,7 +88,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
         # # 'hazards_lidar':16,
         # # 'vases_lidar':16,
         # 'velo':3,
-        # 'action':2,
+        #'action':2,
     }        
     sensor_stack = {
         # 'acc':[],
@@ -93,7 +97,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
         # # 'hazards_lidar':[],
         # # 'vases_lidar':[],
         # 'velo':[],
-        # 'action':[],
+        #'action':[],
     }
     sensor_indcs = {
         # 'acc' : 3,
@@ -102,7 +106,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
         # # 'hazards_lidar':38,
         # # 'vases_lidar':57,
         # 'velo' : 60,
-        # 'action': -1, # this one doesn't matter (comes from action not obs)
+        #'action': -1, # this one doesn't matter (comes from action not obs)
     }
     sensor_mse_weights = {
         # 'acc': 0.0000,
@@ -111,11 +115,11 @@ def main(robot, task, algo, seed, exp_name, cpu):
         # # 'hazards_lidar':1,
         # # 'vases_lidar':1,
         # 'velo' : 1,
-        # 'action': 0, # this one doesn't matter (comes from action not obs)
+        #'action': 1, # this one doesn't matter (comes from action not obs)
     }
 
     sensors_to_stack = len(sensor_dims)
-    add_stacks_p_sensor = 0
+    add_stacks_p_sensor = 2
     add_obs = sum(list(sensor_dims.values())*(add_stacks_p_sensor))
 
     assert len(sensor_stack)!=sensors_to_stack or len(sensor_indcs)!=sensor_stack
@@ -179,7 +183,10 @@ def main(robot, task, algo, seed, exp_name, cpu):
     perturbed_env = PerturbedEnv(p_env, std_inc=0)#0.03)
 
     try:
-        obs, init_sim_state = env.reset()
+        obs = env.reset()
+        action = np.array([0,0])
+
+        init_sim_state = env.get_sim_state()
         p_env.reset(init_sim_state)
         if render: rendered=env.render( mode='human')
         #video_size=[rendered.shape[1],rendered.shape[0]]
@@ -196,11 +203,11 @@ def main(robot, task, algo, seed, exp_name, cpu):
         frames_per_episode = 1000
         ready_to_pool = False
         model_train_metrics = None
-
+        
         while True:
             #if (episode+1)%4==0:
                 #env=p_env
-
+            action_old = action
             if manual_control:
 
                 milliseconds = clock.get_time()
@@ -226,7 +233,21 @@ def main(robot, task, algo, seed, exp_name, cpu):
                     action = np.array(actions[random.randint(0,len(actions)-1)])
 
             obs_old = obs
-            obs, reward, done, info, sim_state  = env.step(action)
+            obs, reward, done, info  = env.step(action)
+
+            print(obs.shape)
+            print(obs_old.shape)
+
+            print(obs[0:3])
+            print(obs[3:19])
+            print(obs[19:22])
+            print(obs[22:38])
+            print(obs[38:41])
+            print(obs[41:57])
+            print(obs[57:60])
+            print(obs[60:])
+
+            sim_state = env.get_sim_state()
             ### stack gyro and accelerometer data
             # print("-------------")
             # print(action)
@@ -251,7 +272,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
                         sensor_stack[k].append(obs[sensor_indcs[k]-sensor_dims[k]:sensor_indcs[k]])
             else:
                 ready_to_pool = True
-
+            
             ## store samples
             if ready_to_pool:
                 obs_old_s = obs_old
@@ -300,14 +321,14 @@ def main(robot, task, algo, seed, exp_name, cpu):
                         error_check = np.sum(roll_start_obs-obs)
 
                     #cur_f = base_next_obs
-                    cur_f, _ = perturbed_env.reset(sim_state=roll_start_sim)
+                    cur_f = perturbed_env.reset(sim_state=roll_start_sim)
                     reset_check = np.sum(cur_f-roll_start_obs)
                     cur_r = obs
 
                     # print(f"roll_start: {roll_start_obs}")
                     # print(f'cur_f: {cur_f}')
                     # print(f'obs: {obs}')
-                    print(f'sum (roll_start_obs-obs: \n {error_check})')
+                    print(f'sum (roll_start_obs-obs: \n {error_check}')
                     print(f'sum (cur_f - roll_start_obs): \n {reset_check}')
 
                     for i in range(0,10):
@@ -315,8 +336,8 @@ def main(robot, task, algo, seed, exp_name, cpu):
                         if i%3==0:
                             rand_action = np.array(actions[random.randint(0,len(actions)-1)])
                        # f_next_obs, f_rew, f_term, f_info = fake_env.step(cur_f, rand_action, deterministic=True)
-                        f_next_obs, f_rew, f_term, f_info, _ = perturbed_env.step(rand_action)
-                        r_next_obs, r_rew, r_term, r_info, _ = env.step(rand_action)
+                        f_next_obs, f_rew, f_term, f_info = perturbed_env.step(rand_action)
+                        r_next_obs, r_rew, r_term, r_info = env.step(rand_action)
                         
                         if add_obs>0:
                             delta_f = f_next_obs[:-add_obs]-cur_f[:-add_obs]
@@ -386,10 +407,21 @@ def main(robot, task, algo, seed, exp_name, cpu):
                 done = True
                 ready_to_pool = False
             if done:
+                
+                plt.plot(np.arange(100), pool['observations'][0:100,55], color='blue')                         # filtered y-vel
+                #plt.plot(np.arange(100), env.obs_replay_vy_filt[0:100], color='red' )
+                plt.plot(np.arange(100), pool['observations'][0:100, 1], color='purple' )
+                #plt.plot(np.arange(100), env.obs_replay_acc_y_filt[0:100], color='orange' )
+                #plt.plot(np.arange(100), np.array(env.obs_replay_acc_y_real[0:100])/100, color='green' )
+
+                #plt.plot(np.arange(100), env.obs_replay_acc_y_real[400:500], color='green' )
+
+                plt.show()
                 frame = 0
                 episode +=1
                 print ("episode {} done".format(episode))
-                env.reset(init_sim_state)
+                #env.reset(init_sim_state)
+                env.reset()
 
     finally:
         env.close()
@@ -402,6 +434,7 @@ def _train_model(model, pool, **kwargs):
     train_inputs, train_outputs = format_samples_for_training(pool)
     model_metrics = model.train(train_inputs, train_outputs, **kwargs)
     return model_metrics
+
 
 
 if __name__ == '__main__':

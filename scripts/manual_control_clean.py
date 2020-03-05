@@ -10,7 +10,7 @@ from cpo_rl.pg.cpo_algo import cpo
 from cpo_rl.model.constructor import construct_model, format_samples_for_training
 from cpo_rl.model.fake_env import FakeEnv
 from cpo_rl.model.perturbed_env import PerturbedEnv
-from preprocessor import SafetyPreprocessedEnv
+from safety_preprocessed_wrapper import SafetyPreprocessedEnv
 #from gym.utils import play
 
 import numpy as np
@@ -25,6 +25,11 @@ from pygame.locals import K_UP
 from pygame.locals import K_DOWN
 from pygame.locals import K_LEFT
 from pygame.locals import K_RIGHT
+
+from stable_baselines.common.vec_env import VecFrameStack
+from stable_baselines.common.vec_env import DummyVecEnv
+
+
 
 
 def main(robot, task, algo, seed, exp_name, cpu):
@@ -50,19 +55,23 @@ def main(robot, task, algo, seed, exp_name, cpu):
         num_steps = 3e7 #1e7
         steps_per_epoch = 100000 #def 30000
     
-    
+    stacks = 4 
     env_name = 'Safexp-'+robot+task+'-v0'
     env = gym.make(env_name)
     env = SafetyPreprocessedEnv(env)
+    env = DummyVecEnv([lambda: env])
+    env = VecFrameStack(env, n_stack=stacks)
+    #env = VecFrameStack(env, 4)
+    
     p_env = gym.make(env_name)
     #gym.utils.play.play(env, zoom=3)
     actions = [
-                [0.8,0.5],
-                [0.8,-0.5],
-                [0.8,0.0],
-                [-0.8,0.5],
-                [-0.8,-0.5],
-                [-0.8,0.0],
+                [0.8,0.4],
+                [0.5,-0.6],
+                [0.3,0.0],
+                [-0.1,0.8],
+                [-0.3,-0.1],
+                [-0.6,0.0],
     ]
     
     clock = pygame.time.Clock()
@@ -71,44 +80,16 @@ def main(robot, task, algo, seed, exp_name, cpu):
     step_on_key = True
 
     ##### model construction #####
-    _model_train_freq = 2000
-    _rollout_freq = 1995
+    _model_train_freq = 5000
+    _rollout_freq = 70000
 
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = np.prod(env.action_space.shape)
-    
 
-    hidden_dim = 340
+    hidden_dim = 340 #280
     num_networks = 7
     num_elites = 5
  
-    sensor_dims = {
-        # 'acc':3,
-        # 'gyro':3,
-        # # 'goal_lidar':16,
-        # # 'hazards_lidar':16,
-        # # 'vases_lidar':16,
-        # 'velo':3,
-        #'action':2,
-    }        
-    sensor_stack = {
-        # 'acc':[],
-        # 'gyro':[],
-        # # 'goal_lidar':[],
-        # # 'hazards_lidar':[],
-        # # 'vases_lidar':[],
-        # 'velo':[],
-        #'action':[],
-    }
-    sensor_indcs = {
-        # 'acc' : 3,
-        # 'gyro' : 22,
-        # # 'goal_lidar':19,
-        # # 'hazards_lidar':38,
-        # # 'vases_lidar':57,
-        # 'velo' : 60,
-        #'action': -1, # this one doesn't matter (comes from action not obs)
-    }
     sensor_mse_weights = {
         # 'acc': 0.0000,
         # 'gyro': 0.000,
@@ -119,47 +100,27 @@ def main(robot, task, algo, seed, exp_name, cpu):
         #'action': 1, # this one doesn't matter (comes from action not obs)
     }
 
-    sensors_to_stack = len(sensor_dims)
-    add_stacks_p_sensor = 2
-    add_obs = sum(list(sensor_dims.values())*(add_stacks_p_sensor))
+    mse_weights = np.ones(shape=(int(obs_dim/stacks)+1), dtype='float32')*100
+    #mse_weights[3:19]=10
+    #mse_weights = mse_weights*100
 
-    assert len(sensor_stack)!=sensors_to_stack or len(sensor_indcs)!=sensor_stack
-
-    mse_weights = np.ones(shape=(obs_dim+add_obs+1), dtype='float32')
-    offset = 0
-    indx = obs_dim
-    for k in sensor_stack:
-        if k is not 'action':
-            mse_weights[sensor_indcs[k]-sensor_dims[k]:sensor_indcs[k]] = sensor_mse_weights[k]
-        offset = sensor_dims[k]*(add_stacks_p_sensor)
-        mse_weights[indx:indx+offset] = sensor_mse_weights[k]
-        indx = indx+offset
-    mse_weights = mse_weights*1000
-    # mse_weights[0:3] = 0.0      # acc
-    # mse_weights[19:22] = 0.0    # gyro
-    # inputs:                               outputs: 
-    # [60:62]  # act                        [60:61] # rew
-    # [62:71]  # acc                        ...
-    # [71:80]  # gyro
-    # [80:128] # goal_lidar
-    # [128:176] # hazards_lidar
-    # [176:224] # vases_lidar
-    # [224:233] # velo
-    # [233:239] # actions
-    # [239] # rew
-    # mse_weights[213:219] = 0.0  # actions
-    # mse_weights[219] = 10       # rewards
-    # mse_weights = mse_weights*100000
-
-    model = construct_model(obs_dim=obs_dim+add_obs, act_dim=act_dim, hidden_dim=hidden_dim, num_networks=num_networks, num_elites=num_elites, mse_weights=mse_weights)
-    #pool = np.zeros(shape=(_model_train_freq, obs_dim+act_dim))
+    #### act_dim +=3 because of additional spike info and last action
+    model = construct_model(obs_dim=obs_dim, 
+        act_dim=act_dim+3, 
+        hidden_dim=hidden_dim, 
+        num_networks=num_networks, 
+        num_elites=num_elites, 
+        mse_weights=mse_weights, 
+        stacks=stacks,
+        )
     pool = {
-        'actions':np.zeros(shape=(_model_train_freq-add_stacks_p_sensor,act_dim), dtype='float32'),
-        'next_observations':np.zeros(shape=(_model_train_freq-add_stacks_p_sensor, obs_dim+add_obs), dtype='float32'),
-        'observations':np.zeros(shape=(_model_train_freq-add_stacks_p_sensor, obs_dim+add_obs), dtype='float32'),
-        'rewards':np.zeros(shape=(_model_train_freq-add_stacks_p_sensor, 1), dtype='float32'),
-        'terminals':np.zeros(shape=(_model_train_freq-add_stacks_p_sensor, 1), dtype='bool'),
-        'sim_states': np.empty(shape=(_model_train_freq-add_stacks_p_sensor,), dtype=object),
+        'actions':np.zeros(shape=(_model_train_freq, act_dim+3), dtype='float32'),
+        'action_processed':np.zeros(shape=(_model_train_freq, 1), dtype='float32'),
+        'next_observations':np.zeros(shape=(_model_train_freq, obs_dim), dtype='float32'),
+        'observations':np.zeros(shape=(_model_train_freq, obs_dim), dtype='float32'),
+        'rewards':np.zeros(shape=(_model_train_freq, 1), dtype='float32'),
+        'terminals':np.zeros(shape=(_model_train_freq, 1), dtype='bool'),
+        'sim_states': np.empty(shape=(_model_train_freq,), dtype=object),
     }
     big_pool = {}
 
@@ -184,18 +145,17 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
     try:
         obs = env.reset()
-        action = np.array([0,0])
+        obs = np.squeeze(obs)
 
-        init_sim_state = env.get_sim_state()
-        p_env.reset(init_sim_state)
+        action = np.array([0,0])
+        #init_sim_state = env.get_sim_state()
+        #p_env.reset(init_sim_state)
         if render: rendered=env.render( mode='human')
-        #video_size=[rendered.shape[1],rendered.shape[0]]
+
         video_size = [100,100]
         screen = pygame.display.set_mode(video_size)
 
-        a = 0
         print("-----Safety Gym Environment is running-----")
-        y = 0
         episode = 0
         episodes_successful = 0
         frame = 0
@@ -203,10 +163,9 @@ def main(robot, task, algo, seed, exp_name, cpu):
         frames_per_episode = 1000
         ready_to_pool = False
         model_train_metrics = None
-        
+        rollouts=0
+
         while True:
-            #if (episode+1)%4==0:
-                #env=p_env
             action_old = action
             if manual_control:
 
@@ -229,67 +188,51 @@ def main(robot, task, algo, seed, exp_name, cpu):
                                 
                 action = np.array([a, s,])
             else:
-                if total_timesteps%7==0:
+                if total_timesteps%15==0:
                     action = np.array(actions[random.randint(0,len(actions)-1)])
+            
+            #### process action for spike prediction
+            processed_act = process_act(action[0], action_old[0])
+            processed_act = np.concatenate((action, action_old, [processed_act]))
 
             obs_old = obs
             obs, reward, done, info  = env.step(action)
+            obs = np.squeeze(obs)
 
-            # print(obs.shape)
-            # print(obs_old.shape)
+            if model_train_metrics:
+                if rollouts == 0:
+                    f_next_obs, f_rew, f_term, f_info = fake_env.step(obs, processed_act, deterministic=True)
+                else:
+                    f_next_obs, f_rew, f_term, f_info = fake_env.step(f_next_obs, processed_act, deterministic=True)
+                if rollouts == 10:
+                    print('restarting rollouts at 0')
+                    rollouts = 0
+                else: 
+                    rollouts += 1
+                print('predicted obs: \n', f_next_obs[-22:-6])
+                print(f_next_obs[-6:-3])
+                print(f_next_obs[-3:])
 
-            # print(obs[0:3])
-            # print(obs[3:19])
-            # print(obs[19:22])
-            # print(obs[22:38])
-            # print(obs[38:41])
-            # print(obs[41:57])
-            # print(obs[57:60])
-            # print(obs[60:])
-
-            sim_state = env.get_sim_state()
-            ### stack gyro and accelerometer data
-            # print("-------------")
-            # print(action)
-            # print(obs[0:3])
-            
-            ## test : remove acc and gyro data
-            #obs[0:3]=0.0
-            #obs[19:22]=0.0
+            #sim_state = env.get_sim_state()
             if render: env.render()
             delta_obs = obs-obs_old
 
-            ## stack sensor
-            if sensors_to_stack>0:
-                if len(list(sensor_stack.values())[0])>=add_stacks_p_sensor+2:
-                    for k in sensor_stack:
-                        sensor_stack[k].pop(0)
-                    ready_to_pool = True
-                for k in sensor_stack:
-                    if k == 'action':
-                        sensor_stack[k].append(action)
-                    else:
-                        sensor_stack[k].append(obs[sensor_indcs[k]-sensor_dims[k]:sensor_indcs[k]])
-            else:
-                ready_to_pool = True
-            
             ## store samples
-            if ready_to_pool:
-                obs_old_s = obs_old
-                obs_next_s = obs
-                for k in sensor_stack:
-                    stack = np.array(sensor_stack[k][:-2]).flatten()
-                    stack_next = np.array(sensor_stack[k][1:-1]).flatten()
-                    obs_old_s = np.concatenate((obs_old_s, stack), axis=0)
-                    obs_next_s  = np.concatenate((obs_next_s, stack_next), axis=0)
-                    
-                pool['actions'][total_timesteps-add_stacks_p_sensor-1] = action
-                pool['next_observations'][total_timesteps-add_stacks_p_sensor] = obs_next_s
-                pool['observations'][total_timesteps-add_stacks_p_sensor] = obs_old_s
-                pool['rewards'][total_timesteps-add_stacks_p_sensor] = reward
-                pool['terminals'][total_timesteps-add_stacks_p_sensor] = done
-                pool['sim_states'][total_timesteps-add_stacks_p_sensor] = sim_state
+            obs_old_s = obs_old
+            obs_next_s = obs
 
+            print('real obs: \n', obs[-22:-6])
+            print(obs[-6:-3])
+            print(obs[-3:])
+            print('---------------------------')
+
+            pool['actions'][total_timesteps] = processed_act
+            pool['action_processed'][total_timesteps] = processed_act[4]
+            pool['next_observations'][total_timesteps] = obs_next_s
+            pool['observations'][total_timesteps] = obs_old_s
+            pool['rewards'][total_timesteps] = reward
+            pool['terminals'][total_timesteps] = done
+            #pool['sim_states'][total_timesteps] = sim_state
 
             frame += 1
             total_timesteps += 1
@@ -309,52 +252,42 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
                 #### train the model with input:(obs, act), outputs: (rew, delta_obs), inputs are divided into sets with holdout_ratio
                 #model.reset()        #@anyboby debug
-                model_train_metrics = _train_model(model, big_pool, batch_size=512, max_epochs=None, holdout_ratio=0.2)
+                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=None, holdout_ratio=0.2)
 
             if total_timesteps % _rollout_freq == 0 and model_train_metrics and not done:
                 for i in range(0,5):
                     roll_start_obs = pool['next_observations'][total_timesteps-1,:]
-                    roll_start_sim = pool['sim_states'][total_timesteps-1]
+                    #roll_start_sim = pool['sim_states'][total_timesteps-1]
+
                     error_check = np.sum(roll_start_obs-obs)
 
                     #cur_f = base_next_obs
-                    cur_f = perturbed_env.reset(sim_state=roll_start_sim)
-                    reset_check = np.sum(cur_f-roll_start_obs)
+                    # cur_f = perturbed_env.reset(sim_state=roll_start_sim)
+                    # reset_check = np.sum(cur_f-roll_start_obs)
                     cur_r = obs
+                    cur_f = cur_r
 
-                    # print(f"roll_start: {roll_start_obs}")
-                    # print(f'cur_f: {cur_f}')
-                    # print(f'obs: {obs}')
                     print(f'sum (roll_start_obs-obs: \n {error_check}')
-                    print(f'sum (cur_f - roll_start_obs): \n {reset_check}')
+                    # print(f'sum (cur_f - roll_start_obs): \n {reset_check}')
 
                     for i in range(0,10):
                         rand_action = np.array(actions[random.randint(0,len(actions)-1)])
                         if i%3==0:
                             rand_action = np.array(actions[random.randint(0,len(actions)-1)])
-                        f_next_obs, f_rew, f_term, f_info = fake_env.step(cur_f, rand_action, deterministic=True)
+                        
+                        processed_act = process_act(rand_action[0], old_action[0])
+                        processed_act = np.concatenate((rand_action, old_action, [processed_act]))
+                        f_next_obs, f_rew, f_term, f_info = fake_env.step(cur_f, processed_act, deterministic=True)
                         #f_next_obs, f_rew, f_term, f_info = perturbed_env.step(rand_action)
                         r_next_obs, r_rew, r_term, r_info = env.step(rand_action)
                         
-                        if add_obs>0:
-                            delta_f = f_next_obs[:-add_obs]-cur_f[:-add_obs]
-                        else: 
-                            delta_f = f_next_obs-cur_f
+                        delta_f = f_next_obs-cur_f
                         delta_r = r_next_obs-cur_r
                         cur_f = f_next_obs
                         cur_r = r_next_obs
 
-                        if add_obs>0:
-                            error = f_next_obs[:-add_obs]-r_next_obs
-                        else:
-                            error = f_next_obs-r_next_obs
-                        #error = delta_f-delta_r
-                        
-                        ### test: replace only sensor info for rollout
-                        # f_next_obs[0:3]  = r_next_obs[0:3]
-                        #f_next_obs[19:22]  = r_next_obs[0:3]
-                        #f_next_obs[0:3]  = r_next_obs[0:3]
-                        #f_next_obs[0:3]  = r_next_obs[0:3]
+                        error = f_next_obs-r_next_obs
+                        action_old = action
 
                         with np.printoptions(precision=3, suppress=True):
                             print("______________________________________________________")
@@ -405,9 +338,14 @@ def main(robot, task, algo, seed, exp_name, cpu):
                 ready_to_pool = False
             if done:
                 
-                plt.plot(np.arange(100), pool['observations'][0:100,58], color='blue')                         # filtered y-vel
+                # plt.plot(np.arange(100), pool['observations'][0:100,55], color='blue')                         # filtered y-vel
                 #plt.plot(np.arange(100), env.obs_replay_vy_filt[0:100], color='red' )
-                plt.plot(np.arange(100), pool['observations'][0:100, 1], color='purple' )
+                # plt.plot(np.arange(100), pool['observations'][0:100, 1], color='purple' )
+
+                # plt.plot(np.arange(100), pool['actions'][0:100, 0], color='blue' )
+                # plt.plot(np.arange(100), pool['action_processed'][0:100, 0], color='red' )
+                # plt.plot(np.arange(100), pool['observations'][0:100, 0], color='purple' )
+
                 #plt.plot(np.arange(100), env.obs_replay_acc_y_filt[0:100], color='orange' )
                 #plt.plot(np.arange(100), np.array(env.obs_replay_acc_y_real[0:100])/100, color='green' )
 
@@ -425,13 +363,33 @@ def main(robot, task, algo, seed, exp_name, cpu):
         print("-----Safety Gym Environment is closed-----")
 
 
-def _train_model(model, pool, **kwargs):
+def _train_model(model, pool,stacks=1, **kwargs):
 
     #### format samples to fit: inputs: concatenate(obs,act), outputs: concatenate(rew, delta_obs)
-    train_inputs, train_outputs = format_samples_for_training(pool)
+    
+    train_inputs, train_outputs = format_samples_for_training(pool, stacks=stacks)
     model_metrics = model.train(train_inputs, train_outputs, **kwargs)
     return model_metrics
 
+def process_act(act, last_act):
+    '''
+    Predicts a spike based on 0-transition between actions
+    !! very specifically designed for x-acceleration spike detection
+    returns a normalized prediction signal for y-acceleration in mujoco envs
+    a shape (1,) np array
+    '''
+    act_x = act
+    last_act_x = last_act
+    acc_spike = 0
+    ### acc
+    if last_act_x==act_x:
+        acc_spike=0
+    else:
+        if last_act_x<=0<=act_x or act_x<=0<=last_act_x:
+            #pass
+            acc_spike = act_x-last_act_x
+            acc_spike = acc_spike/abs(acc_spike) #normalize
+    return acc_spike
 
 
 if __name__ == '__main__':

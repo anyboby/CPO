@@ -55,23 +55,31 @@ def main(robot, task, algo, seed, exp_name, cpu):
         num_steps = 3e7 #1e7
         steps_per_epoch = 100000 #def 30000
     
-    stacks = 4 
+    stacks = 4
     env_name = 'Safexp-'+robot+task+'-v0'
     env = gym.make(env_name)
     env = SafetyPreprocessedEnv(env)
     env = DummyVecEnv([lambda: env])
     env = VecFrameStack(env, n_stack=stacks)
-    #env = VecFrameStack(env, 4)
     
     p_env = gym.make(env_name)
     #gym.utils.play.play(env, zoom=3)
     actions = [
-                [0.8,0.4],
-                [0.5,-0.6],
-                [0.3,0.0],
-                [-0.1,0.8],
-                [-0.3,-0.1],
-                [-0.6,0.0],
+        [.5,.3], 
+        [.5,-.5],
+        [.5,.7],
+        [-.5,-.3],
+        [-.5,.7],
+        [-1,1],
+        [-1,.3], 
+        [-1,-.5],
+        [.5,-1],
+        [.5,-.7],
+        [1,.1],
+        [0.2,.6],
+        [0,-.6],
+        [1,.1],
+        [-.5,-1],
     ]
     
     clock = pygame.time.Clock()
@@ -86,7 +94,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = np.prod(env.action_space.shape)
 
-    hidden_dim = 340 #280
+    hidden_dim = 240 #280
     num_networks = 7
     num_elites = 5
  
@@ -188,7 +196,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
                                 
                 action = np.array([a, s,])
             else:
-                if total_timesteps%15==0:
+                if total_timesteps%5==0:
                     action = np.array(actions[random.randint(0,len(actions)-1)])
             
             #### process action for spike prediction
@@ -196,22 +204,28 @@ def main(robot, task, algo, seed, exp_name, cpu):
             processed_act = np.concatenate((action, action_old, [processed_act]))
 
             obs_old = obs
-            obs, reward, done, info  = env.step(action)
+            obs, reward, done, info  = env.step([action])
             obs = np.squeeze(obs)
 
             if model_train_metrics:
-                if rollouts == 0:
-                    f_next_obs, f_rew, f_term, f_info = fake_env.step(obs, processed_act, deterministic=True)
-                else:
-                    f_next_obs, f_rew, f_term, f_info = fake_env.step(f_next_obs, processed_act, deterministic=True)
                 if rollouts == 10:
                     print('restarting rollouts at 0')
                     rollouts = 0
-                else: 
-                    rollouts += 1
+                if rollouts == 0:
+                    f_next_obs, f_rew, f_term, f_info = fake_env.step(obs_old, processed_act, deterministic=True)
+                else:
+                    f_next_obs, f_rew, f_term, f_info = fake_env.step(f_next_obs, processed_act, deterministic=True)
+                
                 print('predicted obs: \n', f_next_obs[-22:-6])
                 print(f_next_obs[-6:-3])
                 print(f_next_obs[-3:])
+
+                print('real obs: \n', obs[-22:-6])
+                print(obs[-6:-3])
+                print(obs[-3:])
+                print('---------------------------')
+
+                rollouts+=1
 
             #sim_state = env.get_sim_state()
             if render: env.render()
@@ -221,10 +235,6 @@ def main(robot, task, algo, seed, exp_name, cpu):
             obs_old_s = obs_old
             obs_next_s = obs
 
-            print('real obs: \n', obs[-22:-6])
-            print(obs[-6:-3])
-            print(obs[-3:])
-            print('---------------------------')
 
             pool['actions'][total_timesteps] = processed_act
             pool['action_processed'][total_timesteps] = processed_act[4]
@@ -252,7 +262,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
 
                 #### train the model with input:(obs, act), outputs: (rew, delta_obs), inputs are divided into sets with holdout_ratio
                 #model.reset()        #@anyboby debug
-                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=None, holdout_ratio=0.2)
+                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=300, holdout_ratio=0.2)
 
             if total_timesteps % _rollout_freq == 0 and model_train_metrics and not done:
                 for i in range(0,5):

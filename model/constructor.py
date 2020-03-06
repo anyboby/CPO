@@ -10,12 +10,12 @@ def construct_model(obs_dim=11, act_dim=3, rew_dim=1, hidden_dim=200, num_networ
 	model = BNN(params)
 
 	model.add(FC(hidden_dim, input_dim=obs_dim+act_dim, activation="swish", weight_decay=0.000025))	#0.000025))
-	model.add(FC(hidden_dim, activation="swish", weight_decay=0.00005))			#0.00005))
+	model.add(FC(hidden_dim, activation="swish", weight_decay=0.00001))			#0.00005))
 	#model.add(FC(hidden_dim, activation="swish", weight_decay=0.00005))		#@anyboby optional
 	#model.add(FC(hidden_dim, activation="swish", weight_decay=0.00005))			#@anyboby optional
-	model.add(FC(hidden_dim, activation="swish", weight_decay=0.000075))		#0.000075))
-	model.add(FC(hidden_dim, activation="swish", weight_decay=0.000075))		#0.000075))
-	model.add(FC(int(obs_dim/stacks)+rew_dim, weight_decay=0.0001))							#0.0001
+	model.add(FC(hidden_dim, activation="swish", weight_decay=0.00002))		#0.000075))
+	model.add(FC(hidden_dim, activation="swish", weight_decay=0.00002))		#0.000075))
+	model.add(FC(int(obs_dim/stacks)+rew_dim, weight_decay=0.00002))							#0.0001
 	model.finalize(tf.train.AdamOptimizer, {"learning_rate": 0.0007})
 	return model
 

@@ -9,6 +9,7 @@ import itertools
 from collections import OrderedDict
 
 import tensorflow as tf
+tf.get_logger().setLevel('INFO')
 import numpy as np
 from tqdm import trange
 from scipy.io import savemat, loadmat
@@ -19,6 +20,16 @@ from cpo_rl.model.fc import FC
 from cpo_rl.utils.logging import Progress, Silent
 
 np.set_printoptions(precision=5)
+
+## --------------- allow dynamic memory growth to avoid cudnn init error ------------- ##
+from keras.backend.tensorflow_backend import set_session #---------------------------- ##
+config = tf.ConfigProto() #----------------------------------------------------------- ##
+config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU- ##
+config.log_device_placement = True  # to log device placement ----------------------- ##
+sess = tf.Session(config=config) #---------------------------------------------------- ##
+set_session(sess) # set this TensorFlow session as the default session for Keras ----- ##
+## ----------------------------------------------------------------------------------- ##
+
 
 
 class BNN:
@@ -308,7 +319,7 @@ class BNN:
     #################
 
     def train(self, inputs, targets,
-              batch_size=32, max_epochs=None, max_epochs_since_update=13,
+              batch_size=32, max_epochs=None, max_epochs_since_update=5,
               hide_progress=False, holdout_ratio=0.0, max_logging=5000, max_grad_updates=None, timer=None, max_t=None):
         """Trains/Continues network training
 
@@ -408,8 +419,8 @@ class BNN:
                         )
                     ### just to debug, which parts of the output generate most losses ###
 
-                    named_losses = [['M{}'.format(i), losses[i]] for i in range(len(losses))]
-                    named_holdout_losses = [['V{}'.format(i), round(holdout_losses[i], 3)] for i in range(len(holdout_losses))]
+                    named_losses = [['M{}'.format(i), losses[i]*1000] for i in range(len(losses))]      #@anyboby edited *1000 for readability
+                    named_holdout_losses = [['V{}'.format(i), holdout_losses[i]*1000] for i in range(len(holdout_losses))]
                     named_losses = named_losses + named_holdout_losses + [['T', time.time() - t0]]
                     progress.set_description(named_losses)
 

@@ -13,6 +13,10 @@ from cpo_rl.model.perturbed_env import PerturbedEnv
 from safety_preprocessed_wrapper import SafetyPreprocessedEnv
 #from gym.utils import play
 
+from safety_gym.envs.engine import Engine
+
+import json
+import pickle
 import numpy as np
 import pandas
 import random
@@ -32,7 +36,7 @@ from stable_baselines.common.vec_env import DummyVecEnv
 
 
 
-def main(robot, task, algo, seed, exp_name, cpu):
+def main(robot, task, algo, seed, exp_name, cpu, hidden_dim=220, stacks=1):
 
     # Verify experiment
     robot_list = ['point', 'car', 'doggo']
@@ -55,9 +59,38 @@ def main(robot, task, algo, seed, exp_name, cpu):
         num_steps = 3e7 #1e7
         steps_per_epoch = 100000 #def 30000
     
-    stacks = 4
+    stacks = stacks
+#     config = {
+#     'robot_base': 'xmls/point.xml',
+#     'task': 'push',
+#     'observation_flatten': True, 
+#     'observe_goal_lidar': True,
+#     'observe_hazards' : True,
+#     'observe_vases': True,
+#     'lidar_num_bins': 16,
+#     'task': 'goal2',
+#     'goal_keepout': 0.305,
+#     'hazards_size': 0.2,
+#     'hazards_keepout': 0.18,
+#     'action_noise': 0.0,
+#     'observe_qpos': True,  # Observe the qpos of the world
+#     'observe_qvel': True,  # Observe the qvel of the robot
+#     'observe_ctrl': True,  # Observe the previous action
+# }
+
     env_name = 'Safexp-'+robot+task+'-v0'
-    env = gym.make(env_name)
+
+    
+    with open(f'{env_name}_config.json', 'r') as fp:
+        config = json.load(fp)
+
+    env = Engine(config)
+    ### for writing config of env
+    # env = gym.make(env_name)
+    # config = env.config
+    # with open(f'{env_name}_config.json', 'w') as fp:
+    #     json.dump(config, fp)
+
     env = SafetyPreprocessedEnv(env)
     env = DummyVecEnv([lambda: env])
     env = VecFrameStack(env, n_stack=stacks)
@@ -65,21 +98,26 @@ def main(robot, task, algo, seed, exp_name, cpu):
     p_env = gym.make(env_name)
     #gym.utils.play.play(env, zoom=3)
     actions = [
-        [.5,.3], 
-        [.5,-.5],
-        [.5,.7],
-        [-.5,-.3],
-        [-.5,.7],
-        [-1,1],
-        [-1,.3], 
-        [-1,-.5],
-        [.5,-1],
-        [.5,-.7],
-        [1,.1],
-        [0.2,.6],
-        [0,-.6],
-        [1,.1],
-        [-.5,-1],
+        # [.5,.3], 
+        # [.5,-.5],
+        # [.5,.7],
+        # [-.5,-.3],
+        # [-.5,.7],
+        # [-1,1],
+        # [-1,.3], 
+        # [-1,-.5],
+        # [.5,-1],
+        # [.5,-.7],
+        [-0.02,.6],
+        [-0.02,-.6],
+        [0.02,.6],
+        [0.02,-.6],
+        [0,-.6],                  # testing only for rotation
+        [0,.6],                   # testing only for rotation
+        [0.01, 0.0],                # testing only for x acc
+        [-0.01, 0.0],               # testing only for x acc
+        # [1,.1],
+        # [-.5,-1],
     ]
     
     clock = pygame.time.Clock()
@@ -88,13 +126,14 @@ def main(robot, task, algo, seed, exp_name, cpu):
     step_on_key = True
 
     ##### model construction #####
-    _model_train_freq = 5000
+    _model_train_freq = 10000
     _rollout_freq = 70000
 
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = np.prod(env.action_space.shape)
 
-    hidden_dim = 240 #280
+    hidden_dim = hidden_dim
+    #hidden_dim = 145 #280       ##115 for rotation only | 140 for x only | 140 for x and rot 
     num_networks = 7
     num_elites = 5
  
@@ -108,7 +147,9 @@ def main(robot, task, algo, seed, exp_name, cpu):
         #'action': 1, # this one doesn't matter (comes from action not obs)
     }
 
-    mse_weights = np.ones(shape=(int(obs_dim/stacks)+1), dtype='float32')*100
+    mse_weights = np.ones(shape=(int(obs_dim/stacks)+1), dtype='float32')
+    mse_weights[-1]=20          # more weight on reward
+    mse_weights[-2]=20          # more weight on reward
     #mse_weights[3:19]=10
     #mse_weights = mse_weights*100
 
@@ -148,7 +189,7 @@ def main(robot, task, algo, seed, exp_name, cpu):
             return done
 
     static_fns = StaticFns           # termination functions for the envs (model can't simulate those)
-    fake_env = FakeEnv(model, static_fns)
+    fake_env = FakeEnv(model, static_fns, task.lower(), stacks=stacks)
     perturbed_env = PerturbedEnv(p_env, std_inc=0)#0.03)
 
     try:
@@ -173,6 +214,21 @@ def main(robot, task, algo, seed, exp_name, cpu):
         model_train_metrics = None
         rollouts=0
 
+
+
+        file_name = f'pointgoal2_stack{stacks}_noacc_nogyro_goaldist_nofilter'
+        load_data= True
+        write_data = False
+
+        if load_data:
+                infile = open(file_name,'rb')
+                big_pool = pickle.load(infile)
+                infile.close()
+
+                print('---------------')
+                print(f'hidden: {hidden_dim}')
+                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=500, holdout_ratio=0.2)
+
         while True:
             action_old = action
             if manual_control:
@@ -196,9 +252,10 @@ def main(robot, task, algo, seed, exp_name, cpu):
                                 
                 action = np.array([a, s,])
             else:
-                if total_timesteps%5==0:
+                if total_timesteps%45==0:
                     action = np.array(actions[random.randint(0,len(actions)-1)])
             
+            #action = np.array([0.0, 0.2])
             #### process action for spike prediction
             processed_act = process_act(action[0], action_old[0])
             processed_act = np.concatenate((action, action_old, [processed_act]))
@@ -206,7 +263,6 @@ def main(robot, task, algo, seed, exp_name, cpu):
             obs_old = obs
             obs, reward, done, info  = env.step([action])
             obs = np.squeeze(obs)
-
             if model_train_metrics:
                 if rollouts == 10:
                     print('restarting rollouts at 0')
@@ -215,15 +271,25 @@ def main(robot, task, algo, seed, exp_name, cpu):
                     f_next_obs, f_rew, f_term, f_info = fake_env.step(obs_old, processed_act, deterministic=True)
                 else:
                     f_next_obs, f_rew, f_term, f_info = fake_env.step(f_next_obs, processed_act, deterministic=True)
-                
-                print('predicted obs: \n', f_next_obs[-22:-6])
-                print(f_next_obs[-6:-3])
-                print(f_next_obs[-3:])
-
-                print('real obs: \n', obs[-22:-6])
-                print(obs[-6:-3])
-                print(obs[-3:])
-                print('---------------------------')
+                print('------------------')
+                print('predicted obs:')
+                print('goal_l: ', f_next_obs[-55:-39])
+                print('hazards_l: ', f_next_obs[-39:-23])
+                print('vases_l: ', f_next_obs[-23:-7])
+                print('magneto: ', f_next_obs[-7:-4])
+                print('velo: ', f_next_obs[-4:-1])
+                print('goal_dist: ', f_next_obs[-1:])
+                print('rew: ', f_rew)
+                print('------------------')
+                print('real obs: ')
+                print('goal_l: ', obs_unprocesseed['goal_lidar'])
+                print('hazards_l: ', obs_unprocesseed['hazards_lidar'])
+                print('vases_l: ', obs_unprocesseed['vases_lidar'])
+                print('magneto_l: ', obs_unprocesseed['magnetometer'])
+                print('velo: ',obs_unprocesseed['velocimeter'])
+                print('goal_dist: ',obs_unprocesseed['goal_dist'])
+                print('rew: ', reward)
+                print('#######################################')
 
                 rollouts+=1
 
@@ -252,17 +318,26 @@ def main(robot, task, algo, seed, exp_name, cpu):
             if total_timesteps % _model_train_freq == 0:
                 total_timesteps = 0
                 
-                
                 if big_pool:
                     for key in pool:
                         big_pool[key] = np.concatenate((big_pool[key], pool[key]), axis=0)
                 else:
                     for key in pool:
                         big_pool[key] = np.copy(pool[key])
-
+                
+                if write_data:
+                    outfile = open(file_name, 'wb')
+                    pickle.dump(big_pool, outfile)
+                    outfile.close()
+                    return
+                
                 #### train the model with input:(obs, act), outputs: (rew, delta_obs), inputs are divided into sets with holdout_ratio
                 #model.reset()        #@anyboby debug
-                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=300, holdout_ratio=0.2)
+                print('---------------')
+                print(f'hidden: {hidden_dim}')
+                print(f'stacks: {stacks}')
+                model_train_metrics = _train_model(model, big_pool, stacks=stacks, batch_size=512, max_epochs=500, holdout_ratio=0.2)
+
 
             if total_timesteps % _rollout_freq == 0 and model_train_metrics and not done:
                 for i in range(0,5):
@@ -280,13 +355,13 @@ def main(robot, task, algo, seed, exp_name, cpu):
                     print(f'sum (roll_start_obs-obs: \n {error_check}')
                     # print(f'sum (cur_f - roll_start_obs): \n {reset_check}')
 
-                    for i in range(0,10):
+                    for i in range(0,25):
                         rand_action = np.array(actions[random.randint(0,len(actions)-1)])
                         if i%3==0:
                             rand_action = np.array(actions[random.randint(0,len(actions)-1)])
                         
-                        processed_act = process_act(rand_action[0], old_action[0])
-                        processed_act = np.concatenate((rand_action, old_action, [processed_act]))
+                        processed_act = process_act(rand_action[0], action_old[0])
+                        processed_act = np.concatenate((rand_action, action_old, [processed_act]))
                         f_next_obs, f_rew, f_term, f_info = fake_env.step(cur_f, processed_act, deterministic=True)
                         #f_next_obs, f_rew, f_term, f_info = perturbed_env.step(rand_action)
                         r_next_obs, r_rew, r_term, r_info = env.step(rand_action)
@@ -411,6 +486,10 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--exp_name', type=str, default='')
     parser.add_argument('--cpu', type=int, default=1)
+    parser.add_argument('--hidden_dim', type=int, default=220)
+    parser.add_argument('--stacks', type=int, default=1)
+
     args = parser.parse_args()
     exp_name = args.exp_name if not(args.exp_name=='') else None
-    main(args.robot, args.task, args.algo, args.seed, exp_name, args.cpu)
+    main(args.robot, args.task, args.algo, args.seed, exp_name, args.cpu, hidden_dim=args.hidden_dim, stacks=args.stacks)
+

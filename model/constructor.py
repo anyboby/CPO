@@ -31,8 +31,6 @@ def format_samples_for_training(samples, stacks=1):
 
 	"""
 	
-
-
 	obs = samples['observations']
 	act = samples['actions']
 	next_obs = samples['next_observations']

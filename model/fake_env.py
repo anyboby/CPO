@@ -4,7 +4,7 @@ import pdb
 
 class FakeEnv:
 
-    def __init__(self, model, config,task, stacks = 1):
+    def __init__(self, model, config, task, stacks = 1):
         self.model = model
         self.config = config
         self.stacks = stacks

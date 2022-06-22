@@ -28,7 +28,7 @@ mock==3.0.5
 monotonic==1.5
 mpi4py==3.0.2
 mujoco-py==2.0.2.7
-numpy==1.17.5
+numpy==1.22.0
 opencv-python==4.1.2.30
 pandas==0.25.3
 Pillow==7.0.0

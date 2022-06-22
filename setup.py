@@ -16,7 +16,7 @@ setup(
         'matplotlib==3.1.1',
         'mpi4py==3.0.2',
         'mujoco_py==2.0.2.7',
-        'numpy~=1.17.4',
+        'numpy>=1.17.4,<1.23.0',
         'seaborn==0.8.1',
         'tensorflow==1.13.1',
     ],
